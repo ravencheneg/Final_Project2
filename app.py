@@ -11,13 +11,11 @@ from langchain_core.agents import AgentAction
 
 """Chatbot with OpenAI and LangChain using Gradio interface with custom calculator tool."""
 
-# Set up OpenAI API key (uncomment and modify the Google Colab section if needed)
 from google.colab import userdata
 OPENAI_API_KEY = userdata.get('OPENAI_API_KEY')
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
-# Or set your API key directly (not recommended for production)
-# os.environ["OPENAI_API_KEY"] = "your_api_key_here"
+# Used Secret Key via Google Colab
 
 
 class ThinkingCallbackHandler(BaseCallbackHandler):
