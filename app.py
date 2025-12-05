@@ -7,15 +7,28 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.agents import AgentExecutor  # Changed from langchain_core to langchain
 from langchain.agents import create_openai_functions_agent
 from langchain_core.callbacks import BaseCallbackHandler
-from langchain_core.agents import AgentAction 
+from langchain_core.agents import AgentAction
 
 """Chatbot with OpenAI and LangChain using Gradio interface with custom calculator tool."""
 
+# Set up OpenAI API key (uncomment and modify the Google Colab section if needed)
 from google.colab import userdata
 OPENAI_API_KEY = userdata.get('OPENAI_API_KEY')
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
-# Used Secret Key via Google Colab
+# Or set your API key directly (not recommended for production)
+# os.environ["OPENAI_API_KEY"] = "your_api_key_here"
+
+""" Inserting Personas """
+# ------------------ PERSONAS ------------------
+
+PERSONAS = {
+    "Default Assistant": "You are a helpful assistant that can use tools.",
+    "Astra (Poetic AI)": "You are Astra, a poetic and philosophical AI who speaks in metaphors and imagery.",
+    "Bolt (Engineer AI)": "You are Bolt, a highly logical, concise engineer who focuses only on facts and efficiency.",
+    "Sage (Old Mentor)": "You are Sage, an old wise mentor who speaks calmly and gives wisdom.",
+    "Jester (Comedy AI)": "You are Jester, a sarcastic comedian AI who cracks jokes while answering."
+}
 
 
 class ThinkingCallbackHandler(BaseCallbackHandler):
@@ -28,7 +41,7 @@ class ThinkingCallbackHandler(BaseCallbackHandler):
     def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs) -> None:
         """Called when a tool starts running."""
         tool_name = serialized.get("name", "Unknown Tool")
-        step_info = f"**Step {self.current_step}:** 🔧 Using `{tool_name}` with input: `{input_str}`"
+        step_info = f"**Step {self.current_step}:** ⚒️ Using `{tool_name}` with input: `{input_str}`"
         self.thinking_steps.append(step_info)
 
     def on_tool_end(self, output: str, **kwargs) -> None:
@@ -50,7 +63,7 @@ class ThinkingCallbackHandler(BaseCallbackHandler):
             return ""
 
         thinking_content = "\n\n".join(self.thinking_steps)
-        return f"\n\n<details>\n<summary>🤔 <strong>Thinking Process</strong> (click to expand)</summary>\n\n{thinking_content}\n\n</details>\n\n"
+        return f"\n\n<details>\n<summary>🧠 <strong>Thinking Process</strong> (click to expand)</summary>\n\n{thinking_content}\n\n</details>\n\n"
 
     def reset(self):
         """Reset the thinking steps for a new conversation."""
@@ -100,7 +113,7 @@ def list_suicide_hotlines(_: str) -> str:
         str: Formatted hotline numbers as a string.
     """
     return (
-        "📞 Suicide Prevention Hotlines:\n"
+        "\uD83D\uDCDE Suicide Prevention Hotlines:\n"
         "- US National Suicide Prevention Lifeline: 1-800-273-TALK (8255)\n"
         "- Crisis Text Line: Text HOME to 741741 (US & Canada)\n"
         "- SAMHSA's Helpline: 1-800-662-HELP (4357)\n"
@@ -136,112 +149,76 @@ def get_llm() -> ChatOpenAI:
     return ChatOpenAI(model="gpt-4", temperature=0.0)
 
 
-def get_prompt() -> ChatPromptTemplate:
+def get_prompt(persona_system_prompt: str) -> ChatPromptTemplate:
     """
-    Returns a manually constructed ChatPromptTemplate with required variables.
-
-    Returns:
-        ChatPromptTemplate: The prompt template including system and user messages.
+    Build the prompt template using the selected persona.
     """
     return ChatPromptTemplate.from_messages([
-        ("system", "You are a helpful assistant that can use tools."),
+        ("system", persona_system_prompt),
         ("user", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
 
 
-def get_agent_executor() -> AgentExecutor:
-    """
-    Sets up and returns the LangChain AgentExecutor with OpenAI and custom tools.
 
-    Returns:
-        AgentExecutor: The configured agent executor.
+def get_agent_executor(persona: str) -> AgentExecutor:
     """
-    llm: ChatOpenAI = get_llm()
-    tools: List[Tool] = [
-        get_calculator_tool(),
-        get_hotlines_tool()
-    ]
-    prompt: ChatPromptTemplate = get_prompt()
+    Create an agent that uses the selected persona's system prompt.
+    """
+    llm = get_llm()
+    tools = [get_calculator_tool(), get_hotlines_tool()]
+
+    # Grab the persona's system message
+    system_prompt = PERSONAS.get(persona, PERSONAS["Default Assistant"])
+
+    # Build the persona-aware prompt
+    prompt = get_prompt(system_prompt)
+
+    # Create the OpenAI Functions agent
     agent = create_openai_functions_agent(llm=llm, tools=tools, prompt=prompt)
+
     return AgentExecutor(
         agent=agent,
         tools=tools,
         verbose=False,
-        return_intermediate_steps=True  # This ensures we get intermediate steps
+        return_intermediate_steps=True
     )
 
 
+
 # Initialize the agent executor globally
-try:
+"""try:
     agent_executor = get_agent_executor()
     agent_initialized = True
 except Exception as e:
     print(f"Failed to initialize agent: {e}")
-    agent_initialized = False
+    agent_initialized = False """
 
 
-def chat_with_bot(message: str, history: List[Tuple[str, str]]) -> Tuple[str, List[Tuple[str, str]]]:
-    """
-    Process user message and return bot response with updated history.
-
-    Args:
-        message (str): User's input message
-        history (List[Tuple[str, str]]): Chat history as list of (user, bot) tuples
-
-    Returns:
-        Tuple[str, List[Tuple[str, str]]]: Empty string and updated history
-    """
-    if not agent_initialized:
-        bot_response = "❌ Agent not initialized. Please check your OpenAI API key."
-        history.append((message, bot_response))
-        return "", history
-
+def chat_with_bot(message: str, history, persona: str):
     if not message.strip():
         return "", history
 
     try:
-        # Create a custom callback to capture thinking steps
         thinking_callback = ThinkingCallbackHandler()
 
-        # Get response from LangChain agent with callback
-        response = agent_executor.invoke(
+        # Create agent with selected persona
+        agent = get_agent_executor(persona)
+
+        response = agent.invoke(
             {"input": message},
             config={"callbacks": [thinking_callback]}
         )
 
         bot_response = response.get("output", "No response generated.")
-
-        # Get thinking process from callback
         thinking_process = thinking_callback.get_thinking_process()
 
-        # If no thinking process was captured through callback, try intermediate_steps
-        if not thinking_process:
-            intermediate_steps = response.get("intermediate_steps", [])
-            if intermediate_steps:
-                thinking_process = "\n\n<details>\n<summary>🤔 <strong>Thinking Process</strong> (click to expand)</summary>\n\n"
-                for i, (action, observation) in enumerate(intermediate_steps, 1):
-                    tool_name = getattr(action, 'tool', 'Unknown Tool')
-                    tool_input = getattr(action, 'tool_input', 'Unknown Input')
-
-                    thinking_process += f"**Step {i}:** 🔧 Using `{tool_name}` with input: `{tool_input}`\n\n"
-
-                    # Truncate long observations
-                    obs_display = observation[:300] + "..." if len(observation) > 300 else observation
-                    thinking_process += f"**Result:** ✅ {obs_display}\n\n"
-                    thinking_process += "---\n\n"
-
-                thinking_process += "</details>\n\n"
-
-        # Combine thinking process with final response
         full_response = thinking_process + bot_response if thinking_process else bot_response
 
-        # Add to history
         history.append((message, full_response))
 
     except Exception as error:
-        bot_response = f"❌ Error: {str(error)}"
-        history.append((message, bot_response))
+        history.append((message, f"❌ Error: {str(error)}"))
 
     return "", history
 
@@ -254,7 +231,7 @@ def clear_chat() -> List[Tuple[str, str]]:
 def create_sidebar() -> str:
     """Create sidebar content with information about the chatbot."""
     return """
-    # 🤖 LangChain AI Assistant
+    # 🧠 LangChain AI Assistant
 
     ## Available Tools:
 
@@ -293,7 +270,7 @@ def create_interface():
         """
     ) as iface:
 
-        gr.Markdown("# 🤖 LangChain AI Assistant")
+        gr.Markdown("# 🧠 LangChain AI Assistant")
         gr.Markdown("*An intelligent chatbot with calculator and crisis support tools*")
 
         with gr.Row():
@@ -303,6 +280,11 @@ def create_interface():
 
             # Main chat area
             with gr.Column(scale=3):
+                persona_dropdown = gr.Dropdown(
+                choices=list(PERSONAS.keys()),
+                value="Default Assistant",
+                label="Select Persona")
+
                 # Chat history display
                 chatbot = gr.Chatbot(
                     value=[],
@@ -335,23 +317,17 @@ def create_interface():
 
         # Event handlers
         msg_input.submit(
-            fn=chat_with_bot,
-            inputs=[msg_input, chatbot],
-            outputs=[msg_input, chatbot]
-        )
+        fn=chat_with_bot,
+        inputs=[msg_input, chatbot, persona_dropdown],
+        outputs=[msg_input, chatbot])
 
         send_btn.click(
-            fn=chat_with_bot,
-            inputs=[msg_input, chatbot],
-            outputs=[msg_input, chatbot]
-        )
-
-        clear_btn.click(
-            fn=clear_chat,
-            outputs=[chatbot]
-        )
+        fn=chat_with_bot,
+        inputs=[msg_input, chatbot, persona_dropdown],
+        outputs=[msg_input, chatbot])
 
     return iface
+
 
 if __name__ == "__main__":
     # Check if API key is set
